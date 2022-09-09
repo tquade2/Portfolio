@@ -1,0 +1,300 @@
+
+Libraries
+```{r}
+
+library(sf)
+library(tidyverse)
+library(tmap)
+library(tidycensus)
+library(tigris)
+library(rgeos)
+library(rgdal)
+library(raster)
+library(exactextractr)
+library(corrplot)
+library(rmapshaper)
+library(ncdf4)
+
+
+setwd('C:\\Users\\tayqu\\My Drive\\School\\01 Current Semester\\R\\04 Assignments\\assignment 6')
+
+```
+
+Download zip code ACS and COVID data
+```{r}
+
+#1----------
+
+census_api_key('cfeccec66316dab67e8ad022f05799d316f56491')
+
+zips <- get_acs(geography = 'zcta', 
+                  year = 2019,
+                  state = 'OH',
+                  survey = 'acs5',
+                  output = 'wide',
+                  geometry = T,
+                  variables = c(tpop = 'B01003_001',
+                                tpopr = 'B03002_001', 
+                                nhwhite = 'B03002_003',
+                                nhblk = 'B03002_004',
+                                nhasn = 'B03002_006',
+                                hisp = 'B03002_012',
+                                medinc = 'B19013_001'))
+
+#calculate percent race/ethnicity, remove variables
+
+zips <- zips %>%
+            mutate(pnhwhite = nhwhiteE/tpoprE,
+                   pnhasn = nhasnE/tpoprE, 
+                   pnhblk = nhblkE/tpoprE,
+                   phisp = hispE/tpoprE) %>%
+            rename(tpop = tpopE, medinc = medincE) %>%
+            dplyr::select(c(GEOID,tpop, pnhwhite, pnhasn, pnhblk, phisp, medinc))
+
+#2----------
+
+#download cbusbound
+
+ohio <- places(state = 39) %>%
+               filter(GEOID == '3918000')
+
+cbusbound <- filter(ohio, NAME == 'Columbus')
+
+#check projections
+
+zips <- st_as_sf(zips)
+
+zips <- st_transform(zips,crs = 'EPSG:26917')
+cbusbound <- st_transform(cbusbound,crs = 'EPSG:26917')
+
+#clip zips with cbusbound
+
+#cbuszip <- ms_clip(target = zips, clip = cbusbound, remove_slivers = T)
+
+cbuszip <- zips[cbusbound,]
+
+#re-project
+
+cbuszip <- st_transform(cbuszip, crs = 'EPSG:26917')
+
+qtm(cbuszip)
+
+```
+
+Read air quality data
+```{r}
+
+#2----------
+
+pm25 <- raster('data\\V5GL02.HybridPM25.NorthAmerica.201910-201910.nc') # PM2.5 for Sep 2020 monthly avg
+
+st_crs(pm25)
+
+pm25 <- projectRaster(pm25, crs='+proj=utm +zone=17 +datum=WGS84 +units=m +no_defs')
+
+plot(pm25)
+
+pm25
+
+```
+
+Calculate NDVI
+```{r}
+
+#1----------
+
+# Import landsat data (TIF)
+
+landsat <- stack('data//landsat8_composit.tif')
+
+# convert data into rasterbrick for faster processing
+
+landsat_br <- brick(landsat)
+
+# Take a look at bands 4 (red) and 5 (near infrared)
+
+lsbr4 <- landsat_br[[4]]
+lsbr5 <- landsat_br[[5]]
+
+#3----------
+
+ndvi <- (lsbr5-lsbr4)/(lsbr5+lsbr4)
+
+plot(ndvi)
+
+hist(ndvi)
+
+#4----------
+
+greenwat <- ndvi >= 0.5
+
+plot(ndvi)
+
+```
+
+Extract cells from polygons
+```{r}
+
+#1----------
+
+greenzip <- data.frame(exact_extract(greenwat, cbuszip, 'sum'))
+
+greenzip <- rename(greenzip, greenzip = exact_extract.greenwat..cbuszip...sum..)
+
+#2----------
+
+pmzip <- data.frame(exact_extract(pm25, cbuszip, 'mean'))
+
+pmzip <- rename(pmzip, pmzip = exact_extract.pm25..cbuszip...mean..)
+
+#3----------
+
+#merge pmzip and green zip to cbuszip
+
+greenpm <- cbind(pmzip, greenzip)
+
+greenpm <- cbind(greenpm, cbuszip)
+
+```
+
+COVID data
+```{r}
+
+#1----------
+
+cdata <- read_csv('C:\\Users\\tayqu\\My Drive\\School\\01 Current Semester\\R\\04 Assignments\\assignment 6\\COVIDSummaryDataZIP.csv')
+
+#2----------
+
+colnames(cdata)
+
+#Keep cumulative case, cumulative per 100k, and zipcode
+
+cdata <- dplyr::select(cdata, c('Case Count - Cumulative', 'Case Count Per 100K - Cumulative', 'Zip Code'))
+
+#rename columns
+
+cdata <- rename(cdata, 'cases' = 'Case Count - Cumulative')
+cdata <- rename(cdata, 'cases100k' = 'Case Count Per 100K - Cumulative')
+cdata <- rename(cdata, 'GEOID' = 'Zip Code')
+
+#3----------
+
+#join and convert column cases
+
+covid <- left_join(greenpm, cdata, by = 'GEOID')
+
+covid$cases <- as.numeric(covid$cases)
+
+covid$cases100k <- as.numeric(covid$cases100k)
+
+#4----------
+
+covid <- st_as_sf(covid)
+
+qtm(covid)
+
+#5----------
+
+colnames(covid)
+
+var <- covid[c('tpop', 'pnhwhite', 'pnhasn', 'pnhblk', 'phisp', 'medinc', 'greenzip', 'pmzip', 'cases', 'cases100k')]
+
+var <- st_drop_geometry(var)
+
+var <- drop_na(var)
+
+```
+
+Plotting and exploring the data
+```{r}
+
+#1----------
+
+#plot cases100k, greenpm, pmzip, medinc
+
+cases <- tm_shape(covid) +
+                       tm_fill(col = 'cases100k',
+                               style = 'jenks',
+                               palette = 'Reds', 
+                               border.alpha = 0,
+                               title = 'Cases per 100k') +
+                       tm_scale_bar(position = c('right', 'bottom')) +
+                       tm_layout(main.title = 'COVID Cases (Columbus, OH)',
+                                 main.title.size = 1,
+                                 frame = F,
+                                 legend.outside = T,
+                                 legend.outside.position = 'left',) +
+                       tm_compass(position = c('right', 'top'))
+
+green <- tm_shape(covid) +
+                  tm_fill(col = 'greenzip',
+                          style = 'jenks',
+                          palette = 'Greens', 
+                          border.alpha = 0,
+                          title = 'Total Green Space') +
+                  tm_layout(main.title = 'Green Space',
+                            main.title.size = 1,
+                            frame = F,
+                            legend.outside = T,
+                            legend.outside.position = 'left')
+
+air <- tm_shape(covid) +
+                  tm_fill(col = 'pmzip',
+                          style = 'jenks',
+                          palette = 'Blues', 
+                          border.alpha = 0,
+                          title = 'PM2.5 Levels') +
+                  tm_layout(main.title = 'Air Quality',
+                            main.title.size = 1,
+                            frame = F,
+                            legend.outside = T,
+                            legend.outside.position = 'left')
+
+inc <- tm_shape(covid) +
+                  tm_fill(col = 'medinc',
+                          style = 'jenks',
+                          palette = 'Oranges', 
+                          border.alpha = 0,
+                          title = 'Median Income ($)') +
+                  tm_layout(main.title = 'Median Income',
+                            main.title.size = 1,
+                            frame = F,
+                            legend.outside = T,
+                            legend.outside.position = 'left')
+
+tmap_arrange(cases, green, air, inc)
+
+```
+
+```{r}
+
+#2----------
+
+cor(var)
+
+corrplot(cor(var))
+
+#3----------
+
+#pmzip, greenzip, covidcases
+
+par(mfrow = c(2,2))
+
+plot(covid$greenzip, covid$pnhblk,
+     xlab = "Green Space",
+     ylab = '% Black')
+
+plot(covid$greenzip, covid$pnhwhite,
+     xlab = 'Green Space',
+     ylab = '% White')
+
+plot(covid$cases100k, covid$pnhblk,
+     xlab = 'COVID/100k',
+     ylab = '% Black')
+
+plot(covid$pmzip, covid$pnhblk,
+     xlab = "Air Quality",
+     ylab = "% Black")
+
+```

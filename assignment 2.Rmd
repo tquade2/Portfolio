@@ -1,0 +1,63 @@
+```{r}
+library(GISTools)
+library(sf)
+library(dplyr)
+library(GISTools)
+library(sf)
+library(terra)
+library(spData)
+library(tmap)
+library(tigris)
+
+#part1
+
+data(tornados)
+tornsf<-st_as_sf(torn)
+us_states_sf<-st_as_sf(us_states)
+
+head(tornsf)
+colnames(tornsf)
+
+table(tornsf$YEAR,tornsf$STATE)
+
+tornsfm<-tornsf %>% filter(STATE=="27"|STATE=="38"|STATE=="46"|STATE=="55") %>% filter(YEAR>"1969"&YEAR<"2005")
+
+tornsfm
+
+nrow(tornsf)
+nrow(tornsfm)
+
+us.states<-subset(us_states_sf,STATE_NAME=="North Dakota"|STATE_NAME=="South Dakota"|STATE_NAME=="Minnesota"|STATE_NAME=="Wisconsin")
+
+qtm(us.states)+qtm(tornsfm)
+
+head(us_states_sf)
+
+head(us.states)
+
+qtm(us.states,title="Tornados in the Northern Midwest, USA")+qtm(tornsfm)+tm_compass()+ tm_scale_bar()
+```
+
+```{r}
+#part2
+
+hw<-primary_roads()
+us4states<-st_transform(us.states,crs=st_crs(hw))
+tornsfm<-st_transform(tornsfm,crs=st_crs(hw))
+
+hw_clip<-hw[us4states,]
+
+hwbuf<-st_buffer(hw_clip, dist=25000)
+
+torn_nearhw<-tornsfm[hwbuf,]
+
+torn.count<-st_contains(tornsfm,hwbuf)
+
+torn_by_state<-us4states %>%
+  mutate(torn.count = lengths(st_contains(us4states, torn_nearhw)))
+
+head(torn_by_state$STATE_NAME)
+head(torn_by_state$torn.count)
+
+qtm(torn_nearhw)+qtm(us.states,title="Tornados Touchdowns <25km from Major Highways, 1970-2004")+qtm(hwbuf,fill="red")+qtm(hw_clip)+qtm(tornsfm)+tm_compass()+ tm_scale_bar()
+```

@@ -1,0 +1,200 @@
+---
+title: "Lab 13: Crash Analysis"
+author: "John Burza"
+date: '2022-03-01'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### Loading Libraries
+```{r message = F, warning = F, results = 'hide'}
+library(ggmap)
+library(tmap)
+library(sf)
+library(tidyverse)
+library(tidycensus)
+library(tigris)
+library(units)
+
+setwd('C:/Users/Johnny/OneDrive - The Ohio State University/Documents/OSU/22SP/GEOG5229/Labs/lab13')
+```
+
+## Part 1: Geocoding LA vehcile crashes
+
+#### Import crash data
+```{r}
+LAvehcrash <- read.csv('Vehicle crashes.csv', 
+                       header = TRUE, sep = ',', quote = '\"',
+                       dec = '.', fill = TRUE, comment.char = '')
+```
+
+#### Exploring LA vehicle crash data
+```{r}
+# See columns within the dataset
+colnames(LAvehcrash)
+
+# See number of rows
+nrow(LAvehcrash)
+
+# See crashes per year within dataset
+table(LAvehcrash$ACCIDENT_YEAR)
+```
+
+
+#### Preparing crash data for geocoding 
+```{r message = F, error = F, warning = F, results = 'hide'}
+# register_google('AIzaSyDvuVTqW31sT_UJ-Ee2fGOdSMyEKNKBKjs')
+
+# Format the full address of crashes by the primary and secondary road
+# LAvehcrash$addressFull <- paste(LAvehcrash$PRIMARY_RD, '&', LAvehcrash$SECONDARY_RD, 'Los Angeles, CA')
+
+# Ensure all formatted addresses are characters
+# LAvehcrash$addressFull <- as.character(LAvehcrash$addressFull)
+```
+
+
+#### Remove crashes with no coordinates
+```{r}
+# Filter crashes with no coordinates to a separate data frame that's to be geocoded
+geomissing <- LAvehcrash %>%
+  filter(is.na(POINT_X)) %>%
+  filter(is.na(POINT_Y))
+
+# Verify values in filtered data frame are all missing
+any(!is.na(geomissing$POINT_X & geomissing$POINT_Y))
+```
+
+#### Geocode LA vehicle data with missing coordinates
+```{r message = F, error = F, warning = F, results = 'hide'}
+# Use Google's API to geocode crashes missing coordinates by the prepared addresses from above
+# geomissing$geocode <- geocode(geomissing$addressFull)
+```
+#### Prepare the geocoded data to be joined to the crash dataset
+```{r}
+# Save lat/long data as a data frame
+# geomissing_df <- as.data.frame(geomissing$geocode)
+
+# Bind the lat/long data frame to the subset crash data that was missing geometry
+# geomissing <- cbind(geomissing, geomissing_df)
+
+# Create a csv file for the geocoded data
+# write.csv(geomissing, file = 'geomissing_geocoded.csv')
+
+# Import geocoded csv file
+geocoded <- read.csv('geomissing_geocoded.csv',
+                       header = TRUE, sep = ',', quote = '\"',
+                       dec = '.', fill = TRUE, comment.char = '')
+
+# Save geocoded data under the variables within the origin dataset
+geocoded$POINT_X <- geocoded$lon
+geocoded$POINT_Y <- geocoded$lat
+
+# Delete columns that are not within the original dataset
+geocoded <- geocoded %>%
+  select(-c('X','lon','lat','geocode.lat','geocode.lon'))
+
+# Remove NA values from the geocoded dataset
+geocoded <- geocoded %>%
+  filter(!is.na(geocoded$POINT_X))
+
+# Remove NA values from the original crash dataset
+LAvehcrash <- LAvehcrash %>%
+  filter(!is.na(LAvehcrash$POINT_X))
+
+# Verify data frames are similar for binding
+all.equal(colnames(LAvehcrash), colnames(geocoded))
+```
+
+#### Merge geocoded data with original dataset
+```{r}
+# Bind the geocoded dataframe to the original dataframe
+LAvehcrash <- rbind(geocoded, LAvehcrash)
+
+# Check the number of NA values in the coordinates of the updated crash dataset
+sum(is.na(LAvehcrash$POINT_X & LAvehcrash$POINT_Y))
+```
+
+#### Create updated crash dataset with geocoded locations
+```{r}
+write.csv(LAvehcrash, file = 'cleaned_LAvehcrash.csv')
+```
+
+## Part 2: Checking LA bike crashes and aggregating bike and vehicle crash data
+```{r}
+# Import previously geocoded vehicle crash dataset for aggregation
+vehcrash <- read.csv('cleaned_LAvehcrash.csv',
+                       header = TRUE, sep = ',', quote = '\"',
+                       dec = '.', fill = TRUE, comment.char = '')
+
+# Import bike crash dataset
+bikecrash <- read.csv('LA bike crash.csv',
+                       header = TRUE, sep = ',', quote = '\"',
+                       dec = '.', fill = TRUE, comment.char = '')
+```
+
+#### Prepare crash data for aggregation
+```{r}
+# Filter crashes that have coordinates and overwrite bikecrash dataframe
+bikecrash <- bikecrash %>%
+  filter(!is.na(bikecrash$POINT_X & bikecrash$POINT_Y))
+
+# Check the number of NA values in the coordinates of the bike crash dataset
+sum(is.na(bikecrash$POINT_X | bikecrash$POINT_Y))
+
+# Remove row number column from vehicle crash dataset
+vehcrash <- select(vehcrash, -c('X'))
+```
+
+#### Convert dataframes into sf objects for aggregation
+```{r message=F, error=F, results='hide'}
+# Convert dataframes of bike and vehicle crashes to simple features, use WGS84 (4326) as coordinate reference
+vehcrash_sf <- st_as_sf(vehcrash, coords = c('POINT_X', 'POINT_Y'), crs = 4326)
+bikecrash_sf <- st_as_sf(bikecrash, coords = c('POINT_X', 'POINT_Y'),  crs = 4326)
+```
+
+#### Download Census TIGER/Line shapefile for block groups within LA county
+```{r message=F, error=F, results='hide'}
+# Download and transform block groups to NAD83 Zone 5 for southern CA (State FIPS: 06, LA County FIPS: 037)
+LAbg <- block_groups('06', '037') %>%
+  st_transform(6423)
+
+# Transform sf objects to NAD83 Zone 5 for southern CA (State FIPS: 06, LA County FIPS: 037)
+vehcrash_sf <- st_transform(vehcrash_sf, crs = 6423)
+bikecrash_sf <- st_transform(bikecrash_sf, crs = 6423)
+```
+
+#### Prepare sf objects for aggregation
+```{r}
+# Filter bike crashes within LA that happened between 2014 and 2018
+bikecrash_sf <- bikecrash_sf %>%
+  filter(ACCIDENT_YEAR >= 2014 & ACCIDENT_YEAR <= 2018)
+
+# Spatially join block groups with bike crash data
+bcrash_join <- st_join(LAbg, bikecrash_sf)
+
+# Summarize the number of bicyclist injuries for each block group
+bcrash_sf <- bcrash_join %>%
+  select(NAMELSAD, COUNT_BICYCLIST_INJURED, COUNT_BICYCLIST_KILLED) %>%
+  group_by(NAMELSAD) %>%
+  summarise('Bicyclist Inj' = sum(COUNT_BICYCLIST_INJURED, na.rm = TRUE),
+            'Bicyclist Killed' = sum(COUNT_BICYCLIST_KILLED, na.rm = TRUE))
+
+# Spatially join block groups with vehicle crash data
+vcrash_join <- st_join(LAbg, vehcrash_sf)
+
+# Summarize the number of vehicle injuries for each block group
+vcrash_sf <- vcrash_join %>%
+  select(NAMELSAD, NUMBER_INJURED, NUMBER_KILLED) %>%
+  group_by(NAMELSAD) %>%
+  summarise('Motorist Inj' = sum(NUMBER_INJURED, na.rm = TRUE),
+            'Motorist Killed' = sum(NUMBER_KILLED, na.rm = TRUE))
+
+```
+
+```{r}
+bbg <- st_join(bcrash_sf, LAbg)
+```
+
