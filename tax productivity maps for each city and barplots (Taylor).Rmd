@@ -1,0 +1,225 @@
+
+Libraries
+
+```{r error=F, message=FALSE, warning=FALSE, results='hide'}
+
+library(sf)
+library(dplyr)
+library(classInt)
+library(tmap)
+library(egg)
+
+setwd('C:\\Users\\Taylor\\My Drive\\School\\01 Current Semester\\R\\06 Final Project')
+
+```
+
+Cleveland Data
+
+```{r error=F, message=FALSE, warning=FALSE, results='hide'}
+
+# load data
+
+cle <- st_read('C:\\Users\\Taylor\\My Drive\\School\\01 Current Semester\\R\\06 Final Project\\Combined_Parcels_-_cleveland_Only\\Combined_Parcels_-_cleveland_Only.shp')
+
+# filter data
+
+cle <- dplyr::select(cle, c('certifie_3', 'total_acre', 'geometry'))
+
+# calculate tax productivity
+
+cle$tax_prod <- with(cle, certifie_3/total_acre) 
+
+# remove NA's, then inf's and 0's
+
+cle <- cle %>%
+             filter(!is.na(tax_prod)) %>%
+             filter(!is.infinite(tax_prod)) %>%
+             filter(tax_prod != 0)
+
+# (from classInt library) create classification breaks
+
+cle.breaks <- classIntervals(cle$tax_prod, n = 5, style = 'fisher')
+
+# add column to cle data set using classification breaks
+
+cle <- cle %>% mutate(percent_class = cut(tax_prod, cle.breaks$brks, include.lowest = T))
+
+```
+
+Cleveland map
+
+```{r error=F, message=FALSE, warning=FALSE, results='hide'}
+
+cle.map <- tm_shape(cle) +
+                          tm_fill(col = 'tax_prod',
+                                  style = 'fisher',
+                                  palette = 'YlGnBu', 
+                                  border.alpha = 0,
+                                  title = 'Tax $/Acre',
+                                  legend.hist = T) +
+                          tm_layout(main.title = 'Cleveland',
+                                    main.title.size = 1,
+                                    frame = F,
+                                    legend.outside = T,
+                                    legend.outside.position = 'left',
+                                    legend.hist.width = 3) +
+                          tmap_options(check.and.fix = T)
+
+```
+
+Columbus Data
+
+```{r error=F, message=FALSE, warning=FALSE, results='hide'}
+
+# load data
+
+col <- st_read('C:\\Users\\Taylor\\My Drive\\School\\01 Current Semester\\R\\06 Final Project\\Parcel_Boundaries\\Parcel_Boundaries.shp')
+
+# filter out non col metro parcels
+
+col <- col %>% filter (col$CVTTXDSCRP == 'CITY OF COLUMBUS')
+
+# filter data
+
+col <- dplyr::select(col, c('TOTCNTTXOD','ACRES','geometry'))
+
+# calculate tax productivity
+
+col$tax_prod <- with(col, TOTCNTTXOD/ACRES) 
+
+# remove NA's, then inf's and 0's
+
+col <- col %>%
+             filter(!is.na(tax_prod)) %>%
+             filter(!is.infinite(tax_prod)) %>%
+             filter(tax_prod != 0)
+
+# (from classInt library) create classification breaks
+
+col.breaks <- classIntervals(col$tax_prod, n = 5, style = 'fisher')
+
+# add column to cle data set using classification breaks
+
+col <- col %>% mutate(percent_class = cut(tax_prod, col.breaks$brks, include.lowest = T))
+
+```
+
+Columbus Map
+
+```{r error=F, message=FALSE, warning=FALSE, results='hide'}
+
+col.map <- tm_shape(col) +
+                          tm_fill(col = 'tax_prod',
+                                  palette = 'YlGnBu',
+                                  style = 'fisher',
+                                  border.alpha = 0,
+                                  title = 'Tax $/Acre') +
+                          tm_layout(main.title = 'Columbus',
+                                    main.title.size = 1,
+                                    frame = F,
+                                    legend.outside = T,
+                                    legend.outside.position = 'left') +
+                          tmap_options(check.and.fix = T)
+
+```
+
+Cincinnati Data
+
+```{r error=F, message=FALSE, warning=FALSE, results='hide'}
+
+#load data
+
+cin <- st_read('C:\\Users\\Taylor\\My Drive\\School\\01 Current Semester\\R\\06 Final Project\\cincinnati_parcels\\cincinnati_parcels.shp')
+
+#filter data
+
+####cin <- cin %>% filter (cin$CVTTXDSCRP == 'CITY OF col')
+
+# filter data
+
+cin <- dplyr::select(cin, c('ANNUAL_TAX','ACREDEED','geometry'))
+
+# calculate tax productivity
+
+cin$tax_prod <- with(cin, ANNUAL_TAX/ACREDEED) 
+
+# remove NA's, then inf's and 0's
+
+cin <- cin %>%
+             filter(!is.na(tax_prod)) %>%
+             filter(!is.infinite(tax_prod)) %>%
+             filter(tax_prod != 0)
+
+# (from classInt library) create classification breaks
+
+cin.breaks <- classIntervals(cin$tax_prod, n = 5, style = 'fisher')
+
+# add column to cle data set using classification breaks
+
+cin <- cin %>% mutate(percent_class = cut(tax_prod, cin.breaks$brks, include.lowest = T))
+
+```
+
+Cincinnati Map
+
+```{r error=F, message=FALSE, warning=FALSE, results='hide'}
+
+cin.map <- tm_shape(cin) +
+                          tm_fill(col = 'tax_prod',
+                                  palette = 'YlGnBu',
+                                  style = 'fisher',
+                                  border.alpha = 0,
+                                  title = 'Tax $/Acre') +
+                          tm_layout(main.title = 'Cincinnati',
+                                    main.title.size = 1,
+                                    frame = F,
+                                    legend.outside = T,
+                                    legend.outside.position = 'left') +
+                          tmap_options(check.and.fix = T)
+
+```
+
+Analyses
+
+```{r error=F, message=FALSE, warning=FALSE, results='hide'}
+
+#parcel size sum
+
+cle.parcel.sum <- sum(cle$total_acre)
+col.parcel.sum <- sum(col$ACRES)
+cin.parcel.sum <- sum(cin$ACREDEED)
+
+#average parcel size
+
+cle.avg.size <- cle.parcel.sum/133045
+col.avg.size <- col.parcel.sum/175795
+cin.avg.size <- cin.parcel.sum/99198
+
+#total tax income
+
+cle.tax.sum <- sum(cle$certifie_3)
+col.tax.sum <- sum(col$TOTCNTTXOD)
+cin.tax.sum <- sum(cin$ANNUAL_TAX)
+
+#arrange
+
+par(mfrow = c(1,3))
+ 
+ total.parcel.size <- barplot(c(cle.parcel.sum, cin.parcel.sum, col.parcel.sum), names.arg = c('Cleveland', 'Cincinnati', 'Columbus'), xlab = 'Acres', main = 'Total Taxed Parcel Size', horiz = T)
+ 
+  avg.parcel.size <- barplot(c(cle.avg.size, cin.avg.size, col.avg.size), names.arg = c('Cleveland', 'Cincinnati', 'Columbus'), xlab = 'Acres', main = 'Average Taxed Parcel Size', horiz = T)
+ 
+   total.tax <- barplot(c(cle.tax.sum, cin.tax.sum, col.tax.sum), names.arg = c('Cleveland', 'Cincinnati', 'Columbus'), xlab = 'Dollars', main = 'Total Tax Income', horiz = T)
+```
+
+Analysis
+
+```{r error=F, message=FALSE, warning=FALSE, results='hide'}
+
+cle.map
+
+col.map
+
+cin.map
+
+```
